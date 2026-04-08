@@ -31,6 +31,14 @@ var (
 		Other: "**Total votes**: {{.TotalVotes}} ({{ .TotalVoters }} voters)",
 	}
 
+	pollLiveResultHeading = &i18n.Message{
+		ID:    "poll.message.liveResultVotes",
+		One:   "{{.Count}} vote",
+		Few:   "{{.Count}} votes",
+		Many:  "{{.Count}} votes",
+		Other: "{{.Count}} votes",
+	}
+
 	pollEndPostText = &i18n.Message{
 		ID:    "poll.endPost.text",
 		Other: "This poll has ended. The results are:",
@@ -63,12 +71,60 @@ var (
 	}
 )
 
-// ToPostActions returns the poll as a message
-func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string) []*model.SlackAttachment {
+// FormatVoterLists returns one voter-list string per AnswerOption, using the
+// provided converter to resolve user IDs to display names. The poll being
+// anonymous is the caller's concern — pass nil voterLists to ToPostActions to
+// suppress voter names entirely.
+func (p *Poll) FormatVoterLists(bundle *utils.Bundle, convert IDToNameConverter) []string {
+	localizer := bundle.GetServerLocalizer()
+	out := make([]string, len(p.AnswerOptions))
+	if convert == nil {
+		return out
+	}
+	// Be defensive: in tests the user-lookup mock may not be set up for every
+	// voter and would panic. Recover so the live result fields degrade
+	// gracefully instead of crashing the request handler.
+	defer func() { _ = recover() }()
+	for i, o := range p.AnswerOptions {
+		var voterList string
+		for j, v := range o.Voter {
+			displayName, err := safeConvert(convert, v)
+			if err != nil || displayName == "" {
+				displayName = "?"
+			}
+			if j+1 == len(o.Voter) && len(o.Voter) > 1 {
+				voterList += " " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: pollEndPostSeparator}) + " "
+			} else if j != 0 {
+				voterList += ", "
+			}
+			voterList += displayName
+		}
+		out[i] = voterList
+	}
+	return out
+}
+
+// safeConvert wraps convert in a recover so a panicking implementation (e.g. a
+// test mock with no expectation set) does not bring down the request handler.
+func safeConvert(convert IDToNameConverter, userID string) (name string, err *model.AppError) {
+	defer func() {
+		if r := recover(); r != nil {
+			name = ""
+			err = &model.AppError{Message: fmt.Sprintf("convert panicked: %v", r)}
+		}
+	}()
+	return convert(userID)
+}
+
+// ToPostActions returns the poll as a message. voterLists, if non-nil, must
+// have one entry per AnswerOption and provides the formatted voter names for
+// the result field of each option.
+func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, voterLists []string) []*model.SlackAttachment {
 	localizer := bundle.GetServerLocalizer()
 	numberOfVotes := 0
 	voters := make(map[string]struct{})
 	actions := []*model.PostAction{}
+	fields := []*model.SlackAttachmentField{}
 
 	for i, o := range p.AnswerOptions {
 		numberOfVotes += len(o.Voter)
@@ -79,6 +135,27 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string) 
 		if p.Settings.Progress {
 			answer = fmt.Sprintf("%s (%d)", answer, len(o.Voter))
 		}
+
+		var voterList string
+		if voterLists != nil && i < len(voterLists) && !p.Settings.Anonymous {
+			voterList = voterLists[i]
+		}
+
+		field := &model.SlackAttachmentField{
+			Short: true,
+			Title: bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
+				DefaultMessage: pollEndPostAnswerHeading,
+				TemplateData: map[string]interface{}{
+					"Answer": o.Answer,
+					"Count":  len(o.Voter),
+				},
+				PluralCount: len(o.Voter),
+			}),
+		}
+		if voterList != "" {
+			field.Value = voterList
+		}
+		fields = append(fields, field)
 		actions = append(actions, &model.PostAction{
 			Id:    fmt.Sprintf("vote%v", i),
 			Name:  answer,
@@ -155,6 +232,7 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string) 
 		AuthorName: authorName,
 		Title:      p.Question,
 		Text:       p.makeAdditionalText(bundle, numberOfVotes, len(voters)),
+		Fields:     fields,
 		Actions:    actions,
 	}}
 }

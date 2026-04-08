@@ -5,7 +5,7 @@ import {id as pluginId} from '@/manifest';
 import reducer from '@/reducers';
 import DefaultSettings from '@/components/admin_settings/default_settings';
 
-export default class MatterPollPlugin {
+export default class MatterVotePlugin {
     async initialize(registry, store) {
         await this.readPluginConfiguration(registry, store);
         registry.registerAdminConsoleCustomSetting('default_settings', DefaultSettings, {showTitle: true});

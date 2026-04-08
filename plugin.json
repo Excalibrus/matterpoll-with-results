@@ -1,7 +1,7 @@
 {
-    "id": "com.github.matterpoll.matterpoll",
-    "name": "Matterpoll",
-    "description": "Create polls and surveys directly within Mattermost.",
+    "id": "com.github.mattervote.mattervote",
+    "name": "Mattervote",
+    "description": "Create polls with live, always-visible results directly within Mattermost.",
     "homepage_url": "https://github.com/matterpoll/matterpoll",
     "support_url": "https://github.com/matterpoll/matterpoll/issues",
     "release_notes_url": "https://github.com/matterpoll/matterpoll/releases/tag/v1.7.2",
@@ -27,20 +27,20 @@
                 "display_name": "Trigger Word:",
                 "type": "text",
                 "help_text": "Trigger Word must be unique, cannot begin with a slash, and cannot contain any spaces.",
-                "default": "poll"
+                "default": "vote"
             },
             {
                 "key": "ExperimentalUI",
                 "display_name": "Experimental UI:",
                 "type": "bool",
-                "help_text": "When true, Matterpoll will render poll posts with a rich UI. The rich UI is not available on the mobile app.",
+                "help_text": "When true, Mattervote will render poll posts with a rich UI. The rich UI is not available on the mobile app.",
                 "default": false
             },
             {
                 "key": "default_settings",
                 "display_name": "Default Settings",
                 "type": "custom",
-                "help_text": "Settings will be pre-selected in 'Create Poll' dialog. Settings will not be applied to `/poll` command."
+                "help_text": "Settings will be pre-selected in 'Create Poll' dialog. Settings will not be applied to `/vote` command."
             }
         ],
         "footer": "* To report an issue, make a suggestion, or submit a contribution, [check the repository](https://github.com/matterpoll/matterpoll)."

@@ -122,7 +122,7 @@ func TestPollToEndPollPost(t *testing.T) {
 }
 
 func TestPollToPostActions(t *testing.T) {
-	PluginID := "com.github.matterpoll.matterpoll"
+	PluginID := "com.github.mattervote.mattervote"
 	authorName := "John Doe"
 	currentAPIVersion := "v1"
 
@@ -150,6 +150,10 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Yes (0 votes)"},
+					{Short: true, Title: "No (0 votes)"},
+				},
 				Text:       "---\n**Total votes**: 0",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -208,6 +212,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (0 votes)"},
+					{Short: true, Title: "Answer 2 (0 votes)"},
+					{Short: true, Title: "Answer 3 (0 votes)"},
+				},
 				Text:       "---\n**Poll Settings**: progress\n**Total votes**: 0",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -274,6 +283,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (0 votes)"},
+					{Short: true, Title: "Answer 2 (0 votes)"},
+					{Short: true, Title: "Answer 3 (0 votes)"},
+				},
 				Text:       "---\n**Poll Settings**: anonymous, public-add-option\n**Total votes**: 0",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -340,6 +354,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (0 votes)"},
+					{Short: true, Title: "Answer 2 (0 votes)"},
+					{Short: true, Title: "Answer 3 (0 votes)"},
+				},
 				Text:       "---\n**Poll Settings**: anonymous, anonymous-creator\n**Total votes**: 0",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -406,6 +425,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (1 vote)"},
+					{Short: true, Title: "Answer 2 (1 vote)"},
+					{Short: true, Title: "Answer 3 (1 vote)"},
+				},
 				Text:       "---\n**Poll Settings**: votes=3\n**Total votes**: 3 (1 voter)",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -472,6 +496,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (3 votes)"},
+					{Short: true, Title: "Answer 2 (2 votes)"},
+					{Short: true, Title: "Answer 3 (1 vote)"},
+				},
 				Text:       "---\n**Poll Settings**: votes=3\n**Total votes**: 6 (3 voters)",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -538,6 +567,11 @@ func TestPollToPostActions(t *testing.T) {
 			ExpectedAttachments: []*model.SlackAttachment{{
 				AuthorName: "John Doe",
 				Title:      "Question",
+				Fields: []*model.SlackAttachmentField{
+					{Short: true, Title: "Answer 1 (0 votes)"},
+					{Short: true, Title: "Answer 2 (0 votes)"},
+					{Short: true, Title: "Answer 3 (0 votes)"},
+				},
 				Text:       "---\n**Poll Settings**: votes=unlimited\n**Total votes**: 0 (0 voters)",
 				Actions: []*model.PostAction{{
 					Id:    "vote0",
@@ -601,7 +635,7 @@ func TestPollToPostActions(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, test.ExpectedAttachments, test.Poll.ToPostActions(testutils.GetBundle(), PluginID, authorName))
+			assert.Equal(t, test.ExpectedAttachments, test.Poll.ToPostActions(testutils.GetBundle(), PluginID, authorName, nil))
 		})
 	}
 }

@@ -159,7 +159,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 						"poll_id": testutils.GetPollID(),
 					},
 				}
-				actions := testutils.GetPollTwoOptions().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := testutils.GetPollTwoOptions().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
@@ -189,7 +189,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPollTwoOptionsWithSettings(poll.Settings{AnonymousCreator: true, MaxVotes: 1})
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
@@ -218,7 +218,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 						"poll_id": testutils.GetPollID(),
 					},
 				}
-				actions := testutils.GetPollTwoOptions().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := testutils.GetPollTwoOptions().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 				api.On("CreatePost", post).Return(nil, &model.AppError{})
 				api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return()
@@ -242,7 +242,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 						"poll_id": testutils.GetPollID(),
 					},
 				}
-				actions := testutils.GetPoll().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := testutils.GetPoll().ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
@@ -272,7 +272,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPollWithSettings(poll.Settings{Progress: true, MaxVotes: 1})
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 				post.AddProp("card", poll.ToCard(testutils.GetBundle(), converter))
 
@@ -304,7 +304,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 3})
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
@@ -335,7 +335,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 0})
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
@@ -366,7 +366,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPollWithSettings(poll.Settings{Progress: true, Anonymous: true, MaxVotes: 1})
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 				post.AddProp("card", poll.ToCard(testutils.GetBundle(), converter))
 
@@ -398,7 +398,7 @@ func TestPluginExecuteCommand(t *testing.T) {
 					},
 				}
 				poll := testutils.GetPoll()
-				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe")
+				actions := poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil)
 				model.ParseSlackAttachment(post, actions)
 
 				rPost := post.Clone()
