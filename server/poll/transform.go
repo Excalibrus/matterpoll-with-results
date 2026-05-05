@@ -126,11 +126,19 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 	actions := []*model.PostAction{}
 	fields := []*model.SlackAttachmentField{}
 
-	for i, o := range p.AnswerOptions {
+	// First pass: total counts and max so we can scale progress bars.
+	maxOptionVotes := 0
+	for _, o := range p.AnswerOptions {
 		numberOfVotes += len(o.Voter)
+		if len(o.Voter) > maxOptionVotes {
+			maxOptionVotes = len(o.Voter)
+		}
 		for _, v := range o.Voter {
 			voters[v] = struct{}{}
 		}
+	}
+
+	for i, o := range p.AnswerOptions {
 		answer := o.Answer
 		if p.Settings.Progress {
 			answer = fmt.Sprintf("%s (%d)", answer, len(o.Voter))
@@ -141,16 +149,21 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 			voterList = voterLists[i]
 		}
 
+		heading := bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
+			DefaultMessage: pollEndPostAnswerHeading,
+			TemplateData: map[string]interface{}{
+				"Answer": o.Answer,
+				"Count":  len(o.Voter),
+			},
+			PluralCount: len(o.Voter),
+		})
+		title := heading
+		if p.Settings.Bar {
+			title = fmt.Sprintf("%s\n`%s`", heading, progressBar(len(o.Voter), maxOptionVotes, 10))
+		}
 		field := &model.SlackAttachmentField{
 			Short: true,
-			Title: bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
-				DefaultMessage: pollEndPostAnswerHeading,
-				TemplateData: map[string]interface{}{
-					"Answer": o.Answer,
-					"Count":  len(o.Voter),
-				},
-				PluralCount: len(o.Voter),
-			}),
+			Title: title,
 		}
 		if voterList != "" {
 			field.Value = voterList
@@ -229,12 +242,26 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 	}
 
 	return []*model.SlackAttachment{{
+		Color:      "#1c58d9",
 		AuthorName: authorName,
-		Title:      p.Question,
+		Title:      "📊 " + p.Question,
 		Text:       p.makeAdditionalText(bundle, numberOfVotes, len(voters)),
 		Fields:     fields,
 		Actions:    actions,
 	}}
+}
+
+// progressBar renders a fixed-width unicode bar showing count/max.
+// Returns a string of `width` characters using █ for filled and ░ for empty.
+func progressBar(count, max, width int) string {
+	if max <= 0 || width <= 0 {
+		return strings.Repeat("░", width)
+	}
+	filled := (count * width) / max
+	if filled > width {
+		filled = width
+	}
+	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 }
 
 // makeAdditionalText make descriptions about poll
@@ -311,8 +338,9 @@ func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert ID
 	}
 
 	attachments := []*model.SlackAttachment{{
+		Color:      "#1c58d9",
 		AuthorName: authorName,
-		Title:      p.Question,
+		Title:      "📊 " + p.Question,
 		Text:       bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: pollEndPostText}),
 		Fields:     fields,
 	}}

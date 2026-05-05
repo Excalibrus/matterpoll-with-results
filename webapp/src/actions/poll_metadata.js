@@ -1,10 +1,14 @@
 import {id as pluginId} from '@/manifest';
 import ActionTypes from '@/action_types';
 
-export const websocketHasVoted = (data) => async (dispatch) => {
+export const websocketHasVoted = (data) => async (dispatch, getState) => {
+    // Merge into any existing entry so we don't drop option_voters/option_answers
+    // that the GET metadata endpoint populated.
+    const existing = (getState()['plugins-' + pluginId] && getState()['plugins-' + pluginId].pollMetadata && getState()['plugins-' + pluginId].pollMetadata[data.poll_id]) || {};
     return dispatch({
         type: ActionTypes.FETCH_POLL_METADATA,
         data: {
+            ...existing,
             voted_answers: data.voted_answers,
             user_id: data.user_id,
             poll_id: data.poll_id,

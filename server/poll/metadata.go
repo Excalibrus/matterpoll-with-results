@@ -2,15 +2,20 @@ package poll
 
 // Metadata stores personalized metadata of a poll.
 type Metadata struct {
-	VotedAnswers           []string `json:"voted_answers"` // VotedAnswers is list of answer that the user with "UserID" have voted for the poll with "PollID"
-	PollID                 string   `json:"poll_id"`
-	UserID                 string   `json:"user_id"`
-	CanManagePoll          bool     `json:"can_manage_poll"` // CanManagePoll will be true if the user with "UserID" can manage the poll with "PollID", otherwise false.
-	SettingProgress        bool     `json:"setting_progress"`
-	SettingPublicAddOption bool     `json:"setting_public_add_option"`
+	VotedAnswers           []string   `json:"voted_answers"` // VotedAnswers is list of answer that the user with "UserID" have voted for the poll with "PollID"
+	PollID                 string     `json:"poll_id"`
+	UserID                 string     `json:"user_id"`
+	CanManagePoll          bool       `json:"can_manage_poll"` // CanManagePoll will be true if the user with "UserID" can manage the poll with "PollID", otherwise false.
+	SettingProgress        bool       `json:"setting_progress"`
+	SettingPublicAddOption bool       `json:"setting_public_add_option"`
+	SettingAnonymous       bool       `json:"setting_anonymous"`
+	OptionVoters           [][]string `json:"option_voters"` // One slice of voter user IDs per AnswerOption (empty when SettingAnonymous is true).
+	OptionAnswers          []string   `json:"option_answers"` // Answer text for each AnswerOption, in the same order as OptionVoters.
 }
 
-// ToMap returns a Metadata as a map
+// ToMap returns a Metadata as a map. Used for the websocket "has_voted"
+// payload, which only carries user-personal data — option voter lists are
+// fetched separately via the GET metadata endpoint.
 func (m *Metadata) ToMap() map[string]interface{} {
 	return map[string]interface{}{
 		"voted_answers":             m.VotedAnswers,

@@ -5,15 +5,13 @@ import PostType from '@/components/post_type';
 import Client from '@/client';
 import {postTypeComponent} from '@/selector';
 
-export const configurationChange = (registry, store, data) => async (dispatch) => {
+export const configurationChange = (registry, store) => async (dispatch) => {
+    // Always register the custom Mattervote post type — the modern poll card is
+    // not gated behind ExperimentalUI in this fork.
     let registeredComponentId = postTypeComponent(store.getState()) ? postTypeComponent(store.getState()).id : '';
-    if (data.experimentalui) {
+    if (!registeredComponentId) {
         registeredComponentId = registry.registerPostTypeComponent('custom_matterpoll', PostType);
-    } else {
-        registry.unregisterPostTypeComponent(registeredComponentId);
-        registeredComponentId = '';
     }
-
     return dispatch({
         type: ActionTypes.REGISTER_POST_TYPE_COMPONENT_ID,
         data: {postTypeComponentId: registeredComponentId},

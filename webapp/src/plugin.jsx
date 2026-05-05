@@ -12,8 +12,8 @@ export default class MatterVotePlugin {
 
         registry.registerWebSocketEventHandler(
             'custom_' + pluginId + '_configuration_change',
-            (message) => {
-                store.dispatch(configurationChange(registry, store, message.data));
+            () => {
+                store.dispatch(configurationChange(registry, store));
             },
         );
         registry.registerWebSocketEventHandler(
@@ -32,10 +32,11 @@ export default class MatterVotePlugin {
     }
 
     readPluginConfiguration = async (registry, store) => {
-        const data = await fetchPluginConfiguration(store.getState())();
-        if (data && data.experimentalui) {
-            store.dispatch(configurationChange(registry, store, data));
-        }
+        // Always register the modern Mattervote post component, regardless of
+        // the legacy ExperimentalUI flag. We still trigger a fetch so the
+        // server config is loaded into Redux for other consumers.
+        await fetchPluginConfiguration(store.getState())();
+        store.dispatch(configurationChange(registry, store));
     };
 
     uninitialize() {

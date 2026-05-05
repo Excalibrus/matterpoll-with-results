@@ -740,6 +740,8 @@ func TestGetMetadata(t *testing.T) {
 				UserID:        "a",
 				CanManagePoll: true,
 				VotedAnswers:  []string{"Answer 1"},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"a"}, {"b"}, {"b"}},
 			},
 		},
 		"Voted two Answers": {
@@ -758,6 +760,8 @@ func TestGetMetadata(t *testing.T) {
 				UserID:        "b",
 				CanManagePoll: true,
 				VotedAnswers:  []string{"Answer 2", "Answer 3"},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"a"}, {"b"}, {"b"}},
 			},
 		},
 		"Voted no Answers": {
@@ -776,6 +780,8 @@ func TestGetMetadata(t *testing.T) {
 				UserID:        "c",
 				CanManagePoll: true,
 				VotedAnswers:  []string{},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"a"}, {"b"}, {"b"}},
 			}},
 		"With all settings": {
 			Poll: poll.Poll{
@@ -801,6 +807,9 @@ func TestGetMetadata(t *testing.T) {
 				VotedAnswers:           []string{},
 				SettingProgress:        true,
 				SettingPublicAddOption: true,
+				SettingAnonymous:       true,
+				OptionAnswers:          []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:           [][]string{{}, {}, {}},
 			}},
 		"Invalid userID": {
 			Poll: poll.Poll{
@@ -817,6 +826,8 @@ func TestGetMetadata(t *testing.T) {
 				UserID:        "",
 				CanManagePoll: false,
 				VotedAnswers:  []string{},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"a"}, {"b"}, {"b"}},
 			},
 		},
 	} {

@@ -21,6 +21,7 @@ const (
 	SettingKeyAnonymousCreator = "anonymous-creator"
 	SettingKeyProgress         = "progress"
 	SettingKeyPublicAddOption  = "public-add-option"
+	SettingKeyBar              = "bar"
 )
 
 // Poll stores all needed information for a poll
@@ -50,7 +51,8 @@ type Settings struct {
 	AnonymousCreator bool `json:",omitempty"`
 	Progress         bool
 	PublicAddOption  bool
-	MaxVotes         int `json:"max_votes"`
+	Bar              bool `json:",omitempty"`
+	MaxVotes         int  `json:"max_votes"`
 }
 
 // Factory is used to create a new [Poll].
@@ -122,6 +124,8 @@ func NewSettingsFromStrings(strs []string) (Settings, *utils.ErrorMessage) {
 			settings.Progress = true
 		case str == SettingKeyPublicAddOption:
 			settings.PublicAddOption = true
+		case str == SettingKeyBar:
+			settings.Bar = true
 		case votesSettingPattern.MatchString(str):
 			i, errMsg := parseVotesSettings(str)
 			if errMsg != nil {
@@ -323,6 +327,19 @@ func (p *Poll) GetVotedAnswers(userID string) []string {
 
 // GetMetadata returns personalized metadata of a poll.
 func (p *Poll) GetMetadata(userID string, permission bool) *Metadata {
+	optionAnswers := make([]string, len(p.AnswerOptions))
+	optionVoters := make([][]string, len(p.AnswerOptions))
+	for i, o := range p.AnswerOptions {
+		optionAnswers[i] = o.Answer
+		if p.Settings.Anonymous {
+			optionVoters[i] = []string{}
+			continue
+		}
+		// Copy so callers cannot mutate the underlying poll state.
+		voters := make([]string, len(o.Voter))
+		copy(voters, o.Voter)
+		optionVoters[i] = voters
+	}
 	return &Metadata{
 		PollID:                 p.ID,
 		UserID:                 userID,
@@ -330,6 +347,9 @@ func (p *Poll) GetMetadata(userID string, permission bool) *Metadata {
 		VotedAnswers:           p.GetVotedAnswers(userID),
 		SettingProgress:        p.Settings.Progress,
 		SettingPublicAddOption: p.Settings.PublicAddOption,
+		SettingAnonymous:       p.Settings.Anonymous,
+		OptionVoters:           optionVoters,
+		OptionAnswers:          optionAnswers,
 	}
 }
 
@@ -393,6 +413,9 @@ func (s Settings) String() string {
 	}
 	if s.PublicAddOption {
 		settingsText = append(settingsText, "public-add-option")
+	}
+	if s.Bar {
+		settingsText = append(settingsText, "bar")
 	}
 	if s.MaxVotes != 1 {
 		switch s.MaxVotes {

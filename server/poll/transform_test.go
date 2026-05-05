@@ -36,8 +36,9 @@ func TestPollToEndPollPost(t *testing.T) {
 		"Normal poll": {
 			Poll: testutils.GetPollWithVotes(),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
 				Fields: []*model.SlackAttachmentField{{
 					Title: "Answer 1 (3 votes)",
@@ -57,8 +58,9 @@ func TestPollToEndPollPost(t *testing.T) {
 		"Anonymous poll": {
 			Poll: testutils.GetPollWithVotesAndSettings(poll.Settings{Anonymous: true}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
 				Fields: []*model.SlackAttachmentField{{
 					Title: "Answer 1 (3 votes)",
@@ -78,8 +80,9 @@ func TestPollToEndPollPost(t *testing.T) {
 		"Anonymous creator poll": {
 			Poll: testutils.GetPollWithVotesAndSettings(poll.Settings{AnonymousCreator: true}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
 				Fields: []*model.SlackAttachmentField{{
 					Title: "Answer 1 (3 votes)",
@@ -148,8 +151,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Two options": {
 			Poll: testutils.GetPollTwoOptions(),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Yes (0 votes)"},
 					{Short: true, Title: "No (0 votes)"},
@@ -210,8 +214,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multiple questions, settings: progress": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Progress: true, MaxVotes: 1}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
@@ -281,8 +286,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multiple questions, settings: anonymous, public-add-option": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Anonymous: true, PublicAddOption: true, MaxVotes: 1}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
@@ -352,8 +358,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multipile questions, settings: anonymous, anonymous-creator": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Anonymous: true, AnonymousCreator: true, MaxVotes: 1}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
@@ -423,8 +430,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multipile questions, settings: votes=3": {
 			Poll: pollWithMulti,
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (1 vote)"},
 					{Short: true, Title: "Answer 2 (1 vote)"},
@@ -494,8 +502,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multiple questions, settings: votes=3, multiple voters": {
 			Poll: pollWithMulti2,
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (3 votes)"},
 					{Short: true, Title: "Answer 2 (2 votes)"},
@@ -565,8 +574,9 @@ func TestPollToPostActions(t *testing.T) {
 		"Multiple questions, settings: votes=0": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{MaxVotes: 0}),
 			ExpectedAttachments: []*model.SlackAttachment{{
+				Color:      "#1c58d9",
 				AuthorName: "John Doe",
-				Title:      "Question",
+				Title:      "📊 Question",
 				Fields: []*model.SlackAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},

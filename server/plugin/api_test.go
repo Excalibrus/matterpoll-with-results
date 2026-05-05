@@ -3364,6 +3364,8 @@ func TestHandlePollMetadata(t *testing.T) {
 				UserID:        "userID1",
 				CanManagePoll: true,
 				VotedAnswers:  []string{"Answer 1"},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"userID1", "userID2", "userID3"}, {"userID4"}, {}},
 			}),
 		},
 		"Valid request without votes": {
@@ -3383,6 +3385,8 @@ func TestHandlePollMetadata(t *testing.T) {
 				UserID:        "userID5",
 				CanManagePoll: false,
 				VotedAnswers:  []string{},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"userID1", "userID2", "userID3"}, {"userID4"}, {}},
 			}),
 		},
 		"Valid request without votes, CanManagePoll fails": {
@@ -3403,6 +3407,8 @@ func TestHandlePollMetadata(t *testing.T) {
 				UserID:        "userID5",
 				CanManagePoll: false,
 				VotedAnswers:  []string{},
+				OptionAnswers: []string{"Answer 1", "Answer 2", "Answer 3"},
+				OptionVoters:  [][]string{{"userID1", "userID2", "userID3"}, {"userID4"}, {}},
 			}),
 		},
 		"Valid request, PollStore.Get fails": {
