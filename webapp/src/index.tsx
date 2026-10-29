@@ -1,9 +1,9 @@
-import MatterVotePlugin from '@/plugin';
 import manifest from '@/manifest';
+import MatterVotePlugin from '@/plugin';
 
 declare global {
     interface Window {
-        registerPlugin(id: string, plugin: MatterVotePlugin): void
+        registerPlugin(id: string, plugin: MatterVotePlugin): void;
     }
 
     // fix for a type problem in webapp as of 6dcac2

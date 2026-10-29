@@ -6,8 +6,10 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
@@ -95,9 +97,94 @@ func (p *MatterpollPlugin) InitAPI() *mux.Router {
 	return r
 }
 
+// maxRequestBodyBytes bounds how much of a request body a handler will read.
+// Post action and dialog submissions are far smaller than this.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
+// ServeHTTP adds the protections the Mattermost server applies to its own REST API,
+// but not to requests it forwards to plugins: panic recovery, a request body limit and security headers.
+// It is done here instead of with router middleware, because mux only runs middleware for matched routes.
 func (p *MatterpollPlugin) ServeHTTP(_ *plugin.Context, w http.ResponseWriter, r *http.Request) {
-	p.API.LogDebug("New request:", "Host", r.Host, "RequestURI", r.RequestURI, "Method", r.Method)
+	start := time.Now()
+	sw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	sw.Header().Set("X-Content-Type-Options", "nosniff")
+	r.Body = http.MaxBytesReader(sw, r.Body, maxRequestBodyBytes)
+
+	p.serveWithRecovery(sw, r)
+
+	// The query string is omitted because it may carry secrets.
+	p.API.LogDebug("Handled request",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", strconv.Itoa(sw.status),
+		"duration", time.Since(start).String(),
+		"user_id", r.Header.Get("Mattermost-User-ID"),
+	)
+}
+
+// serveWithRecovery stops a panicking handler from crashing the plugin process.
+func (p *MatterpollPlugin) serveWithRecovery(w *statusRecorder, r *http.Request) {
+	defer p.recoverPanic("Recovered from panic in HTTP handler", func() {
+		// Once the response has started, writing an error would only corrupt it.
+		if w.wroteHeader {
+			return
+		}
+		// Drop headers the handler set for a successful response, e.g. Cache-Control.
+		h := w.Header()
+		clear(h)
+		h.Set("X-Content-Type-Options", "nosniff")
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}, "path", r.URL.Path)
+
 	p.router.ServeHTTP(w, r)
+}
+
+// recoverPanic must be called directly by defer. It stops a panic from crashing the plugin process,
+// which the server deactivates if it crashes repeatedly, logs it and then calls onPanic, if set.
+func (p *MatterpollPlugin) recoverPanic(msg string, onPanic func(), keyValuePairs ...any) {
+	rec := recover()
+	if rec == nil {
+		return
+	}
+
+	keyValuePairs = append(keyValuePairs, "panic", fmt.Sprint(rec), "stack", string(debug.Stack()))
+	p.API.LogError(msg, keyValuePairs...)
+	if onPanic != nil {
+		onPanic()
+	}
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+// WriteHeader records only the first status, since later ones never reach the client.
+func (s *statusRecorder) WriteHeader(status int) {
+	if !s.wroteHeader {
+		s.status = status
+		s.wroteHeader = true
+	}
+	s.ResponseWriter.WriteHeader(status)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.wroteHeader = true
+	return s.ResponseWriter.Write(b)
+}
+
+// Flush keeps the underlying writer's http.Flusher visible to handlers that type-assert for it.
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		s.wroteHeader = true
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
 }
 
 func (p *MatterpollPlugin) handleInfo(w http.ResponseWriter, _ *http.Request) {
@@ -333,12 +420,12 @@ func (p *MatterpollPlugin) handleCreatePoll(_ map[string]string, request *model.
 		ChannelId: request.ChannelId,
 		RootId:    request.CallbackId,
 		Type:      MatterpollPostType,
-		Props: map[string]interface{}{
+		Props: map[string]any{
 			"poll_id": poll.ID,
 		},
 	}
 
-	model.ParseSlackAttachment(post, actions)
+	model.ParseMessageAttachment(post, actions)
 	if poll.Settings.Progress {
 		post.AddProp("card", poll.ToCard(p.bundle, p.ConvertUserIDToDisplayName))
 	}
@@ -386,10 +473,10 @@ func (p *MatterpollPlugin) handleVote(vars map[string]string, request *model.Pos
 		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(err, "failed to save poll")
 	}
 
-	go p.publishPollMetadata(poll, userID)
+	p.publishPollMetadataAsync(poll, userID)
 
 	post := &model.Post{}
-	model.ParseSlackAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
+	model.ParseMessageAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
 	post.AddProp("poll_id", poll.ID)
 	if poll.Settings.Progress {
 		post.AddProp("card", poll.ToCard(p.bundle, p.ConvertUserIDToDisplayName))
@@ -412,7 +499,7 @@ func (p *MatterpollPlugin) handleVote(vars map[string]string, request *model.Pos
 				Many:  "Your vote has been counted. You have {{.Remains}} votes left.",
 				Other: "Your vote has been counted. You have {{.Remains}} votes left.",
 			},
-			TemplateData: map[string]interface{}{"Remains": remains},
+			TemplateData: map[string]any{"Remains": remains},
 			PluralCount:  remains,
 		}, post, nil
 	}
@@ -422,6 +509,17 @@ func (p *MatterpollPlugin) handleVote(vars map[string]string, request *model.Pos
 		return &i18n.LocalizeConfig{DefaultMessage: responseVoteUpdated}, post, nil
 	}
 	return &i18n.LocalizeConfig{DefaultMessage: responseVoteCounted}, post, nil
+}
+
+// publishPollMetadataAsync publishes the poll metadata in the background, so that the
+// caller does not have to wait on the permission check and the websocket event. The
+// goroutine is tracked in p.backgroundJobs so it can be waited on.
+func (p *MatterpollPlugin) publishPollMetadataAsync(poll *poll.Poll, userID string) {
+	p.backgroundJobs.Go(func() {
+		// A panic here happens after the HTTP handler returned, so serveWithRecovery can't catch it.
+		defer p.recoverPanic("Recovered from panic while publishing poll metadata", nil, "userID", userID)
+		p.publishPollMetadata(poll, userID)
+	})
 }
 
 func (p *MatterpollPlugin) publishPollMetadata(poll *poll.Poll, userID string) {
@@ -464,10 +562,10 @@ func (p *MatterpollPlugin) handleResetVotes(vars map[string]string, request *mod
 		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(err, "failed to save poll")
 	}
 
-	go p.publishPollMetadata(poll, userID)
+	p.publishPollMetadataAsync(poll, userID)
 
 	post := &model.Post{}
-	model.ParseSlackAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
+	model.ParseMessageAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
 	post.AddProp("poll_id", poll.ID)
 	if poll.Settings.Progress {
 		post.AddProp("card", poll.ToCard(p.bundle, p.ConvertUserIDToDisplayName))
@@ -478,8 +576,31 @@ func (p *MatterpollPlugin) handleResetVotes(vars map[string]string, request *mod
 			ID:    "response.resetVotes.success",
 			Other: "All votes are cleared. Your previous votes were [{{.ClearedVotes}}].",
 		},
-		TemplateData: map[string]interface{}{"ClearedVotes": strings.Join(votedAnswers, ", ")},
+		TemplateData: map[string]any{"ClearedVotes": strings.Join(votedAnswers, ", ")},
 	}, post, nil
+}
+
+// checkManagePoll checks whether userID may manage poll. It returns nil if they may. Otherwise it
+// returns the message to show them: denied if they lack permission, or commandErrorGeneric along
+// with an error if the permission check failed.
+func (p *MatterpollPlugin) checkManagePoll(poll *poll.Poll, userID string, denied *i18n.Message) (*i18n.Message, error) {
+	canManagePoll, appErr := p.CanManagePoll(poll, userID)
+	if appErr != nil {
+		return commandErrorGeneric, errors.Wrap(appErr, "failed to check permission")
+	}
+	if !canManagePoll {
+		return denied, nil
+	}
+	return nil, nil
+}
+
+// checkAddOption is like checkManagePoll, but lets every user add options to a poll that has
+// PublicAddOption set.
+func (p *MatterpollPlugin) checkAddOption(poll *poll.Poll, userID string) (*i18n.Message, error) {
+	if poll.Settings.PublicAddOption {
+		return nil, nil
+	}
+	return p.checkManagePoll(poll, userID, responseAddOptionInvalidPermission)
 }
 
 func (p *MatterpollPlugin) handleAddOption(vars map[string]string, request *model.PostActionIntegrationRequest) (*i18n.LocalizeConfig, *model.Post, error) {
@@ -491,14 +612,8 @@ func (p *MatterpollPlugin) handleAddOption(vars map[string]string, request *mode
 		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(err, "failed to get poll")
 	}
 
-	if !poll.Settings.PublicAddOption {
-		canManagePoll, appErr := p.CanManagePoll(poll, request.UserId)
-		if appErr != nil {
-			return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(appErr, "failed to check permission")
-		}
-		if !canManagePoll {
-			return &i18n.LocalizeConfig{DefaultMessage: responseAddOptionInvalidPermission}, nil, nil
-		}
+	if msg, permErr := p.checkAddOption(poll, request.UserId); msg != nil {
+		return &i18n.LocalizeConfig{DefaultMessage: msg}, nil, permErr
 	}
 
 	siteURL := *p.ServerConfig.ServiceSettings.SiteURL
@@ -542,6 +657,10 @@ func (p *MatterpollPlugin) handleAddOptionConfirm(vars map[string]string, reques
 		return commandErrorGeneric, nil, errors.Wrap(err, "failed to get poll")
 	}
 
+	if msg, permErr := p.checkAddOption(poll, request.UserId); msg != nil {
+		return msg, nil, permErr
+	}
+
 	displayName, appErr := p.ConvertCreatorIDToDisplayName(poll.Creator)
 	if appErr != nil {
 		return commandErrorGeneric, nil, errors.Wrap(appErr, "failed to get display name for creator")
@@ -577,7 +696,7 @@ func (p *MatterpollPlugin) handleAddOptionConfirm(vars map[string]string, reques
 		return nil, response, nil
 	}
 
-	model.ParseSlackAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
+	model.ParseMessageAttachment(post, poll.ToPostActions(p.bundle, root.Manifest.Id, displayName, poll.FormatVoterLists(p.bundle, p.ConvertUserIDToDisplayName)))
 	if poll.Settings.Progress {
 		post.AddProp("card", poll.ToCard(p.bundle, p.ConvertUserIDToDisplayName))
 	}
@@ -602,12 +721,8 @@ func (p *MatterpollPlugin) handleEndPoll(vars map[string]string, request *model.
 		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(err, "failed to get poll")
 	}
 
-	canManagePoll, appErr := p.CanManagePoll(poll, request.UserId)
-	if appErr != nil {
-		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(appErr, "failed to check permission")
-	}
-	if !canManagePoll {
-		return &i18n.LocalizeConfig{DefaultMessage: responseEndPollInvalidPermission}, nil, nil
+	if msg, permErr := p.checkManagePoll(poll, request.UserId, responseEndPollInvalidPermission); msg != nil {
+		return &i18n.LocalizeConfig{DefaultMessage: msg}, nil, permErr
 	}
 
 	siteURL := *p.ServerConfig.ServiceSettings.SiteURL
@@ -640,6 +755,10 @@ func (p *MatterpollPlugin) handleEndPollConfirm(vars map[string]string, request 
 	poll, err := p.Store.Poll().Get(pollID)
 	if err != nil {
 		return commandErrorGeneric, nil, errors.Wrap(err, "failed to get poll")
+	}
+
+	if msg, permErr := p.checkManagePoll(poll, request.UserId, responseEndPollInvalidPermission); msg != nil {
+		return msg, nil, permErr
 	}
 
 	displayName, appErr := p.ConvertCreatorIDToDisplayName(poll.Creator)
@@ -681,10 +800,11 @@ func (p *MatterpollPlugin) postEndPollAnnouncement(channelID, postID, question s
 		RootId:    postID,
 		Message: p.bundle.LocalizeWithConfig(p.bundle.GetServerLocalizer(), &i18n.LocalizeConfig{
 			DefaultMessage: responseEndPollSuccessfully,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"Question": question,
 				"Link":     fmt.Sprintf("%s/_redirect/pl/%s", *p.ServerConfig.ServiceSettings.SiteURL, postID),
-			}}),
+			},
+		}),
 		Type: model.PostTypeDefault,
 	}
 
@@ -702,12 +822,8 @@ func (p *MatterpollPlugin) handleDeletePoll(vars map[string]string, request *mod
 		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(err, "failed to get poll")
 	}
 
-	canManagePoll, appErr := p.CanManagePoll(poll, request.UserId)
-	if appErr != nil {
-		return &i18n.LocalizeConfig{DefaultMessage: commandErrorGeneric}, nil, errors.Wrap(appErr, "failed to check permission")
-	}
-	if !canManagePoll {
-		return &i18n.LocalizeConfig{DefaultMessage: responseDeletePollInvalidPermission}, nil, nil
+	if msg, permErr := p.checkManagePoll(poll, request.UserId, responseDeletePollInvalidPermission); msg != nil {
+		return &i18n.LocalizeConfig{DefaultMessage: msg}, nil, permErr
 	}
 
 	siteURL := *p.ServerConfig.ServiceSettings.SiteURL
@@ -741,6 +857,10 @@ func (p *MatterpollPlugin) handleDeletePollConfirm(vars map[string]string, reque
 	poll, err := p.Store.Poll().Get(pollID)
 	if err != nil {
 		return commandErrorGeneric, nil, errors.Wrap(err, "failed to get poll")
+	}
+
+	if msg, permErr := p.checkManagePoll(poll, request.UserId, responseDeletePollInvalidPermission); msg != nil {
+		return msg, nil, permErr
 	}
 
 	var postID string

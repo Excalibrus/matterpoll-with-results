@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,7 +35,7 @@ func TestServeHTTP(t *testing.T) {
 		"Request info": {
 			RequestURL:         "/",
 			ExpectedStatusCode: http.StatusOK,
-			ExpectedHeader:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			ExpectedHeader:     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}, "X-Content-Type-Options": []string{"nosniff"}},
 			ExpectedbodyString: infoMessage + root.Manifest.Version + "\n",
 		},
 		"InvalidRequestURL": {
@@ -48,7 +49,6 @@ func TestServeHTTP(t *testing.T) {
 			assert := assert.New(t)
 
 			api := &plugintest.API{}
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			defer api.AssertExpectations(t)
 			p := setupTestPlugin(t, api, &mockstore.Store{})
 
@@ -69,6 +69,86 @@ func TestServeHTTP(t *testing.T) {
 			assert.Equal(test.ExpectedHeader, result.Header)
 		})
 	}
+}
+
+func TestServeHTTPRecoversFromPanic(t *testing.T) {
+	setupPanicPlugin := func(t *testing.T, api *plugintest.API, handler http.HandlerFunc) *MatterpollPlugin {
+		p := setupTestPlugin(t, api, &mockstore.Store{})
+		p.router.HandleFunc("/panic", handler)
+		return p
+	}
+
+	t.Run("before the response is written", func(t *testing.T) {
+		api := &plugintest.API{}
+		api.On("LogError", "Recovered from panic in HTTP handler", "path", "/panic", "panic", "boom", "stack", mock.AnythingOfType("string")).Return().Once()
+		api.On("LogDebug", "Handled request", "method", http.MethodGet, "path", "/panic", "status", "500", "duration", mock.AnythingOfType("string"), "user_id", "userID1").Return().Once()
+		defer api.AssertExpectations(t)
+		p := setupPanicPlugin(t, api, func(http.ResponseWriter, *http.Request) {
+			panic("boom")
+		})
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/panic?token=secret", nil)
+		r.Header.Set("Mattermost-User-ID", "userID1")
+		p.ServeHTTP(nil, w, r)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	})
+
+	t.Run("after the response is written", func(t *testing.T) {
+		api := &plugintest.API{}
+		api.On("LogError", "Recovered from panic in HTTP handler", "path", "/panic", "panic", "boom", "stack", mock.AnythingOfType("string")).Return().Once()
+		api.On("LogDebug", "Handled request", "method", http.MethodGet, "path", "/panic", "status", "200", "duration", mock.AnythingOfType("string"), "user_id", "").Return().Once()
+		defer api.AssertExpectations(t)
+		p := setupPanicPlugin(t, api, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=604800")
+			_, _ = io.WriteString(w, "ok")
+			panic("boom")
+		})
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		p.ServeHTTP(nil, w, r)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "ok", w.Body.String())
+	})
+
+	t.Run("drops headers set by the handler", func(t *testing.T) {
+		api := &plugintest.API{}
+		api.On("LogError", testutils.GetMockArgumentsWithType("string", 7)...).Return().Once()
+		defer api.AssertExpectations(t)
+		p := setupPanicPlugin(t, api, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Cache-Control", "public, max-age=604800")
+			panic("boom")
+		})
+
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, "/panic", nil)
+		p.ServeHTTP(nil, w, r)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+		assert.Empty(t, w.Header().Get("Cache-Control"))
+		assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	})
+}
+
+func TestServeHTTPLimitsRequestBody(t *testing.T) {
+	api := &plugintest.API{}
+	defer api.AssertExpectations(t)
+	p := setupTestPlugin(t, api, &mockstore.Store{})
+	var readErr error
+	p.router.HandleFunc("/echo", func(_ http.ResponseWriter, r *http.Request) {
+		_, readErr = io.ReadAll(r.Body)
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/echo", strings.NewReader(strings.Repeat("a", maxRequestBodyBytes+1)))
+	p.ServeHTTP(nil, w, r)
+
+	var maxBytesErr *http.MaxBytesError
+	assert.ErrorAs(t, readErr, &maxBytesErr)
 }
 
 func TestServeFile(t *testing.T) {
@@ -100,7 +180,6 @@ func TestServeFile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			defer api.AssertExpectations(t)
 			p := setupTestPlugin(t, api, &mockstore.Store{})
 
@@ -118,7 +197,7 @@ func TestServeFile(t *testing.T) {
 			assert.Equal(test.ExpectedStatusCode, result.StatusCode)
 			if test.ShouldError {
 				assert.Equal([]byte{}, bodyBytes)
-				assert.Equal(http.Header{}, result.Header)
+				assert.Equal(http.Header{"X-Content-Type-Options": []string{"nosniff"}}, result.Header)
 			} else {
 				assert.NotNil(bodyBytes)
 				assert.Contains([]string{"image/png"}, result.Header.Get("Content-Type"))
@@ -142,7 +221,6 @@ func TestHandlePluginConfiguration(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			defer api.AssertExpectations(t)
 			p := setupTestPlugin(t, api, &mockstore.Store{})
 
@@ -161,7 +239,7 @@ func TestHandlePluginConfiguration(t *testing.T) {
 			assert.Equal(test.ExpectedStatusCode, result.StatusCode)
 			if test.ShouldError {
 				assert.Equal([]byte{}, bodyBytes)
-				assert.Equal(http.Header{}, result.Header)
+				assert.Equal(http.Header{"X-Content-Type-Options": []string{"nosniff"}}, result.Header)
 			} else {
 				assert.NotNil(bodyBytes)
 				assert.Contains([]string{"application/json"}, result.Header.Get("Content-Type"))
@@ -182,7 +260,6 @@ func TestHandleCreatePoll(t *testing.T) {
 
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: "userID1", TeamId: "teamID1"}
@@ -213,7 +290,7 @@ func TestHandleCreatePoll(t *testing.T) {
 			"poll_id": testutils.GetPollID(),
 		},
 	}
-	model.ParseSlackAttachment(expectedPost, expectedPoll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPost, expectedPoll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	pollWithTwoOptions := testutils.GetPoll()
 	pollWithTwoOptions.AnswerOptions = pollWithTwoOptions.AnswerOptions[0:2]
@@ -226,7 +303,7 @@ func TestHandleCreatePoll(t *testing.T) {
 			"poll_id": testutils.GetPollID(),
 		},
 	}
-	model.ParseSlackAttachment(expectedPostTwoOptions, pollWithTwoOptions.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPostTwoOptions, pollWithTwoOptions.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	pollWithSettings := testutils.GetPollWithSettings(poll.Settings{Progress: true, Anonymous: true, PublicAddOption: true, MaxVotes: 3})
 	expectedPostWithSettings := &model.Post{
@@ -239,7 +316,7 @@ func TestHandleCreatePoll(t *testing.T) {
 		},
 	}
 	expectedPostWithSettings.AddProp("card", pollWithSettings.ToCard(testutils.GetBundle(), converter))
-	model.ParseSlackAttachment(expectedPostWithSettings, pollWithSettings.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPostWithSettings, pollWithSettings.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	for name, test := range map[string]struct {
 		SetupAPI           func(*plugintest.API) *plugintest.API
@@ -268,7 +345,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": pollWithTwoOptions.Question,
 					"option1":  pollWithTwoOptions.AnswerOptions[0].Answer,
 					"option2":  pollWithTwoOptions.AnswerOptions[1].Answer,
@@ -297,7 +374,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": expectedPoll.Question,
 					"option1":  expectedPoll.AnswerOptions[0].Answer,
 					"option2":  expectedPoll.AnswerOptions[1].Answer,
@@ -327,7 +404,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question":                  pollWithSettings.Question,
 					"option1":                   pollWithSettings.AnswerOptions[0].Answer,
 					"option2":                   pollWithSettings.AnswerOptions[1].Answer,
@@ -353,7 +430,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"option1": expectedPoll.AnswerOptions[0].Answer,
 					"option2": expectedPoll.AnswerOptions[1].Answer,
 				},
@@ -373,7 +450,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": expectedPoll.Question,
 					"option2":  expectedPoll.AnswerOptions[1].Answer,
 				},
@@ -393,7 +470,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": expectedPoll.Question,
 					"option1":  expectedPoll.AnswerOptions[0].Answer,
 				},
@@ -413,7 +490,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": expectedPoll.Question,
 					"option1":  "abc",
 					"option2":  "abc",
@@ -436,7 +513,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": pollWithTwoOptions.Question,
 					"option1":  pollWithTwoOptions.AnswerOptions[0].Answer,
 					"option2":  pollWithTwoOptions.AnswerOptions[1].Answer,
@@ -465,7 +542,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": pollWithTwoOptions.Question,
 					"option1":  pollWithTwoOptions.AnswerOptions[0].Answer,
 					"option2":  pollWithTwoOptions.AnswerOptions[1].Answer,
@@ -487,7 +564,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"question": pollWithTwoOptions.Question,
 					"option1":  pollWithTwoOptions.AnswerOptions[0].Answer,
 					"option2":  pollWithTwoOptions.AnswerOptions[1].Answer,
@@ -507,7 +584,7 @@ func TestHandleCreatePoll(t *testing.T) {
 				UserId:     userID,
 				CallbackId: rootID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"option1": expectedPoll.AnswerOptions[0].Answer,
 					"option2": expectedPoll.AnswerOptions[1].Answer,
 				},
@@ -527,7 +604,6 @@ func TestHandleCreatePoll(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -571,7 +647,8 @@ func TestHandleCreatePoll(t *testing.T) {
 
 			if test.ExpectedResponse != nil {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 			}
 		})
@@ -592,7 +669,6 @@ func TestHandleVote(t *testing.T) {
 
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: "userID1", TeamId: "teamID1"}
@@ -618,7 +694,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, msg)
 	require.Nil(t, err)
 	expectedPost1 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost1, poll1Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll1Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost1, poll1Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll1Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	poll2In := testutils.GetPoll()
 	msg, err = poll2In.UpdateVote("userID1", 0)
@@ -629,7 +705,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, msg)
 	require.Nil(t, err)
 	expectedPost2 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost2, poll2Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll2Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost2, poll2Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll2Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	poll3In := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 2})
 	poll3Out := poll3In.Copy()
@@ -637,7 +713,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, msg)
 	require.Nil(t, err)
 	expectedPost3 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost3, poll3Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll3Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost3, poll3Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll3Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	poll4In := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 2})
 	msg, err = poll4In.UpdateVote("userID1", 0)
@@ -648,7 +724,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, msg)
 	require.Nil(t, err)
 	expectedPost4 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost4, poll4Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll4Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost4, poll4Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll4Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	poll5In := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 2})
 	msg, err = poll5In.UpdateVote("userID1", 0)
@@ -672,7 +748,7 @@ func TestHandleVote(t *testing.T) {
 		}
 		return converter(userID)
 	}
-	model.ParseSlackAttachment(expectedPost6, poll6Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll6Out.FormatVoterLists(testutils.GetBundle(), converterUser2Fails)))
+	model.ParseMessageAttachment(expectedPost6, poll6Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll6Out.FormatVoterLists(testutils.GetBundle(), converterUser2Fails)))
 
 	poll7In := testutils.GetPollWithSettings(poll.Settings{Progress: true, MaxVotes: 1})
 	msg, err = poll7In.UpdateVote("userID1", 0)
@@ -684,7 +760,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, err)
 	expectedPost7 := &model.Post{}
 	expectedPost7.AddProp("card", poll7Out.ToCard(testutils.GetBundle(), converter))
-	model.ParseSlackAttachment(expectedPost7, poll7Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll7Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost7, poll7Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll7Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	poll8In := testutils.GetPollWithSettings(poll.Settings{MaxVotes: 0})
 	poll8Out := poll8In.Copy()
@@ -692,7 +768,7 @@ func TestHandleVote(t *testing.T) {
 	require.Nil(t, msg)
 	require.Nil(t, err)
 	expectedPost8 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost8, poll8Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll8Out.FormatVoterLists(testutils.GetBundle(), converter)))
+	model.ParseMessageAttachment(expectedPost8, poll8Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", poll8Out.FormatVoterLists(testutils.GetBundle(), converter)))
 
 	post := &model.Post{
 		ChannelId: "channelID1",
@@ -712,7 +788,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("GetPost", "postID1").Return(post, nil)
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"voted_answers":             []string{"Answer 1"},
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -737,7 +813,7 @@ func TestHandleVote(t *testing.T) {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"voted_answers":             []string{"Answer 1"},
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -768,7 +844,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
 				api.On("GetUser", "userID2").Return(&model.User{Username: "jhDoe2", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           false,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID2",
@@ -794,7 +870,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("GetPost", "postID1").Return(post, nil)
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           true,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -838,7 +914,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
 				api.On("GetUser", "userID2").Return(&model.User{Username: "jhDoe2", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           false,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID2",
@@ -864,7 +940,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("GetPost", "postID1").Return(post, nil)
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"voted_answers":             []string{"Answer 2"},
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -890,7 +966,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("GetPost", "postID1").Return(post, nil)
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{FirstName: "John", LastName: "Doe", Username: "jhDoe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"voted_answers":             []string{"Answer 2"},
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -942,7 +1018,7 @@ func TestHandleVote(t *testing.T) {
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
 				api.On("GetUser", "userID2").Return(nil, &model.AppError{})
 				api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 7)...).Return().Maybe()
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"voted_answers":             []string{"Answer 2"},
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID2",
@@ -1063,7 +1139,6 @@ func TestHandleVote(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -1093,6 +1168,9 @@ func TestHandleVote(t *testing.T) {
 				r.Header.Add("Mattermost-User-ID", model.NewId())
 			}
 			p.ServeHTTP(nil, w, r)
+			// handleVote/handleResetVotes publish the poll metadata in the background;
+			// wait for that to finish before the deferred mock assertions run.
+			p.backgroundJobs.Wait()
 
 			result := w.Result()
 			require.NotNil(t, result)
@@ -1106,7 +1184,8 @@ func TestHandleVote(t *testing.T) {
 
 			if result.StatusCode == http.StatusOK {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 				require.NotNil(t, response)
 				assert.Equal(test.ExpectedResponse.EphemeralText, response.EphemeralText)
@@ -1135,7 +1214,6 @@ func TestHandleResetVotes(t *testing.T) {
 
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: "userID1", TeamId: "teamID1"}
@@ -1183,11 +1261,11 @@ func TestHandleResetVotes(t *testing.T) {
 	}
 
 	expectedPost := &model.Post{}
-	model.ParseSlackAttachment(expectedPost, poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPost, poll.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	expectedPostWithProgress := &model.Post{}
 	expectedPostWithProgress.AddProp("card", pollEmptyWithProgress.ToCard(testutils.GetBundle(), converter))
-	model.ParseSlackAttachment(expectedPostWithProgress, pollEmptyWithProgress.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPostWithProgress, pollEmptyWithProgress.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	poll2WithVotes := poll.Copy()
 	msg, err = poll2WithVotes.UpdateVote("userID1", 0)
@@ -1237,7 +1315,7 @@ func TestHandleResetVotes(t *testing.T) {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           true,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -1261,7 +1339,7 @@ func TestHandleResetVotes(t *testing.T) {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{FirstName: "John", LastName: "Doe", Username: "jhDoe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           true,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -1285,7 +1363,7 @@ func TestHandleResetVotes(t *testing.T) {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "jhDoe", FirstName: "John", LastName: "Doe"}, nil)
-				api.On("PublishWebSocketEvent", "has_voted", map[string]interface{}{
+				api.On("PublishWebSocketEvent", "has_voted", map[string]any{
 					"can_manage_poll":           true,
 					"poll_id":                   testutils.GetPollID(),
 					"user_id":                   "userID1",
@@ -1369,7 +1447,6 @@ func TestHandleResetVotes(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -1398,6 +1475,9 @@ func TestHandleResetVotes(t *testing.T) {
 				r.Header.Add("Mattermost-User-ID", model.NewId())
 			}
 			p.ServeHTTP(nil, w, r)
+			// handleVote/handleResetVotes publish the poll metadata in the background;
+			// wait for that to finish before the deferred mock assertions run.
+			p.backgroundJobs.Wait()
 
 			result := w.Result()
 			require.NotNil(t, result)
@@ -1411,7 +1491,8 @@ func TestHandleResetVotes(t *testing.T) {
 
 			if result.StatusCode == http.StatusOK {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 				require.NotNil(t, response)
 				assert.Equal(test.ExpectedResponse.EphemeralText, response.EphemeralText)
@@ -1425,13 +1506,13 @@ func TestHandleResetVotes(t *testing.T) {
 		})
 	}
 }
+
 func TestHandleAddOption(t *testing.T) {
 	userID := testutils.GetPollWithVotes().Creator
 	triggerID := model.NewId()
 
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: userID, PostId: "postID1", TriggerId: triggerID}
@@ -1459,12 +1540,13 @@ func TestHandleAddOption(t *testing.T) {
 			IconURL:     fmt.Sprintf(responseIconURL, testutils.GetSiteURL(), root.Manifest.Id),
 			CallbackId:  "postID1",
 			SubmitLabel: "Add",
-			Elements: []model.DialogElement{{
-				DisplayName: "Option",
-				Name:        "answerOption",
-				Type:        "text",
-				SubType:     "text",
-			},
+			Elements: []model.DialogElement{
+				{
+					DisplayName: "Option",
+					Name:        "answerOption",
+					Type:        "text",
+					SubType:     "text",
+				},
 			},
 		},
 	}
@@ -1684,7 +1766,6 @@ func TestHandleAddOption(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -1726,7 +1807,8 @@ func TestHandleAddOption(t *testing.T) {
 
 			if result.StatusCode == http.StatusOK {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 				assert.Equal(response, &model.PostActionIntegrationResponse{})
 			} else {
@@ -1754,7 +1836,6 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: "userID1", TeamId: "teamID1"}
@@ -1784,14 +1865,14 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 	expectedPost1 := &model.Post{
 		ChannelId: channelID,
 	}
-	model.ParseSlackAttachment(expectedPost1, poll1Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPost1, poll1Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	poll2In := testutils.GetPollWithoutPostID()
 	poll2Out := poll2In.Copy()
 	err = poll2Out.AddAnswerOption("New Option")
 	require.Nil(t, err)
 	expectedPost2 := &model.Post{}
-	model.ParseSlackAttachment(expectedPost2, poll2Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPost2, poll2Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	poll3In := testutils.GetPollWithVotesAndSettings(poll.Settings{Progress: true, MaxVotes: 2})
 	poll3In.PostID = postID
@@ -1802,7 +1883,17 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 		ChannelId: channelID,
 	}
 	expectedPost3.AddProp("card", poll3Out.ToCard(testutils.GetBundle(), converter))
-	model.ParseSlackAttachment(expectedPost3, poll3Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+	model.ParseMessageAttachment(expectedPost3, poll3Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
+
+	poll4In := testutils.GetPollWithVotesAndSettings(poll.Settings{PublicAddOption: true})
+	poll4In.PostID = postID
+	poll4Out := poll4In.Copy()
+	err = poll4Out.AddAnswerOption("New Option")
+	require.Nil(t, err)
+	expectedPost4 := &model.Post{
+		ChannelId: channelID,
+	}
+	model.ParseMessageAttachment(expectedPost4, poll4Out.ToPostActions(testutils.GetBundle(), root.Manifest.Id, "John Doe", nil))
 
 	for name, test := range map[string]struct {
 		SetupAPI           func(*plugintest.API) *plugintest.API
@@ -1829,7 +1920,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -1857,7 +1948,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption":      "New Option",
 					"settings-progress": true,
 				},
@@ -1883,7 +1974,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -1908,7 +1999,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -1934,7 +2025,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": 1,
 				},
 			},
@@ -1960,7 +2051,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": poll1In.AnswerOptions[0].Answer,
 				},
 			},
@@ -1991,7 +2082,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2017,7 +2108,79 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
+					"answerOption": "New Option",
+				},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Something went wrong. Please try again later.",
+		},
+		"Invalid request, user is neither creator nor System Admin": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", postID).Return(expectedPost1, nil)
+				api.On("HasPermissionToChannel", "userID2", channelID, model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "jhDoe2", Roles: model.SystemUserRoleId}, nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(poll1In.Copy(), nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: postID,
+				ChannelId:  channelID,
+				Submission: map[string]any{
+					"answerOption": "New Option",
+				},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Only the creator of a poll and System Admins are allowed to add options.",
+		},
+		"Valid request, user is neither creator nor System Admin but PublicAddOption is set": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", postID).Return(expectedPost4, nil)
+				api.On("HasPermissionToChannel", "userID2", channelID, model.PermissionReadChannel).Return(true)
+				api.On("GetUser", userID).Return(&model.User{FirstName: "John", LastName: "Doe"}, nil)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "jhDoe2", Roles: model.SystemUserRoleId}, nil)
+				api.On("UpdatePost", expectedPost4).Return(expectedPost4, nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(poll4In.Copy(), nil)
+				store.PollStore.On("Update", poll4In, poll4Out).Return(nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: postID,
+				ChannelId:  channelID,
+				Submission: map[string]any{
+					"answerOption": "New Option",
+				},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Successfully added the option.",
+		},
+		"Invalid request, CanManagePoll fails": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", postID).Return(expectedPost1, nil)
+				api.On("HasPermissionToChannel", "userID2", channelID, model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(nil, &model.AppError{})
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(poll1In.Copy(), nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: postID,
+				ChannelId:  channelID,
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2035,7 +2198,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2056,7 +2219,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2079,7 +2242,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2099,7 +2262,7 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 				UserId:     userID,
 				CallbackId: postID,
 				ChannelId:  channelID,
-				Submission: map[string]interface{}{
+				Submission: map[string]any{
 					"answerOption": "New Option",
 				},
 			},
@@ -2118,7 +2281,6 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -2159,7 +2321,8 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 			assert.Equal(test.ExpectedResponse, response)
 			if test.ExpectedResponse != nil {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 			}
 		})
@@ -2169,7 +2332,6 @@ func TestHandleAddOptionConfirm(t *testing.T) {
 func TestHandleEndPoll(t *testing.T) {
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{UserId: "userID1", ChannelId: "channelID1", PostId: "postID1"}
@@ -2418,7 +2580,6 @@ func TestHandleEndPoll(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -2460,7 +2621,8 @@ func TestHandleEndPoll(t *testing.T) {
 
 			if result.StatusCode == http.StatusOK {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 				assert.Equal(response, &model.PostActionIntegrationResponse{})
 			} else {
@@ -2473,7 +2635,6 @@ func TestHandleEndPoll(t *testing.T) {
 func TestHandleEndPollConfirm(t *testing.T) {
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.SubmitDialogRequest{}
@@ -2587,7 +2748,7 @@ func TestHandleEndPollConfirm(t *testing.T) {
 		"Valid request, GetUser fails for voter": {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("GetPost", "postID1").Return(post, nil)
-				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "user1"}, nil)
 				api.On("GetUser", "userID2").Return(nil, &model.AppError{})
 				return api
@@ -2596,7 +2757,7 @@ func TestHandleEndPollConfirm(t *testing.T) {
 				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
 				return store
 			},
-			Request:            &model.SubmitDialogRequest{UserId: "userID2", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
+			Request:            &model.SubmitDialogRequest{UserId: "userID1", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
 			ExpectedMsg:        "Something went wrong. Please try again later.",
@@ -2604,7 +2765,7 @@ func TestHandleEndPollConfirm(t *testing.T) {
 		"Valid request, UpdatePost fails": {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("GetPost", "postID1").Return(post, nil)
-				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "user1", FirstName: "John", LastName: "Doe"}, nil)
 				api.On("GetUser", "userID2").Return(&model.User{Username: "user2"}, nil)
 				api.On("GetUser", "userID3").Return(&model.User{Username: "user3"}, nil)
@@ -2616,7 +2777,7 @@ func TestHandleEndPollConfirm(t *testing.T) {
 				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
 				return store
 			},
-			Request:            &model.SubmitDialogRequest{UserId: "userID2", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
+			Request:            &model.SubmitDialogRequest{UserId: "userID1", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
 			ExpectedMsg:        "Something went wrong. Please try again later.",
@@ -2624,7 +2785,7 @@ func TestHandleEndPollConfirm(t *testing.T) {
 		"Valid request, PollStore.Delete fails": {
 			SetupAPI: func(api *plugintest.API) *plugintest.API {
 				api.On("GetPost", "postID1").Return(post, nil)
-				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("HasPermissionToChannel", "userID1", "channelID1", model.PermissionReadChannel).Return(true)
 				api.On("GetUser", "userID1").Return(&model.User{Username: "user1", FirstName: "John", LastName: "Doe"}, nil)
 				api.On("GetUser", "userID2").Return(&model.User{Username: "user2"}, nil)
 				api.On("GetUser", "userID3").Return(&model.User{Username: "user3"}, nil)
@@ -2635,6 +2796,60 @@ func TestHandleEndPollConfirm(t *testing.T) {
 			SetupStore: func(store *mockstore.Store) *mockstore.Store {
 				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
 				store.PollStore.On("Delete", testutils.GetPollWithVotes()).Return(&model.AppError{})
+				return store
+			},
+			Request:            &model.SubmitDialogRequest{UserId: "userID1", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Something went wrong. Please try again later.",
+		},
+		"Invalid request, user is neither creator nor System Admin": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "user2", Roles: model.SystemUserRoleId}, nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
+				return store
+			},
+			Request:            &model.SubmitDialogRequest{UserId: "userID2", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Only the creator of a poll and System Admins are allowed to end it.",
+		},
+		"Valid request, user is System Admin": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID1").Return(&model.User{Username: "user1", FirstName: "John", LastName: "Doe"}, nil)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "user2", Roles: model.SystemAdminRoleId + " " + model.SystemUserRoleId}, nil)
+				api.On("GetUser", "userID3").Return(&model.User{Username: "user3"}, nil)
+				api.On("GetUser", "userID4").Return(&model.User{Username: "user4"}, nil)
+				api.On("UpdatePost", expectedPost).Return(nil, nil)
+				api.On("CreatePost", mock.AnythingOfType("*model.Post")).Return(nil, nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
+				store.PollStore.On("Delete", testutils.GetPollWithVotes()).Return(nil)
+				return store
+			},
+			Request:            &model.SubmitDialogRequest{UserId: "userID2", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "",
+		},
+		"Invalid request, CanManagePoll fails": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(nil, &model.AppError{})
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPollWithVotes(), nil)
 				return store
 			},
 			Request:            &model.SubmitDialogRequest{UserId: "userID2", ChannelId: "channelID1", CallbackId: "postID1", TeamId: "teamID1"},
@@ -2703,7 +2918,6 @@ func TestHandleEndPollConfirm(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -2746,7 +2960,8 @@ func TestHandleEndPollConfirm(t *testing.T) {
 			assert.Equal(test.ExpectedResponse, response)
 			if test.ExpectedResponse != nil {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 			}
 		})
@@ -2786,10 +3001,10 @@ func TestPostEndPollAnnouncement(t *testing.T) {
 		})
 	}
 }
+
 func TestHandleDeletePoll(t *testing.T) {
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.PostActionIntegrationRequest{}
@@ -3037,7 +3252,6 @@ func TestHandleDeletePoll(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -3079,7 +3293,8 @@ func TestHandleDeletePoll(t *testing.T) {
 
 			if result.StatusCode == http.StatusOK {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 				assert.Equal(response, &model.PostActionIntegrationResponse{})
 			} else {
@@ -3092,7 +3307,6 @@ func TestHandleDeletePoll(t *testing.T) {
 func TestHandleDeletePollConfirm(t *testing.T) {
 	t.Run("not-authorized", func(t *testing.T) {
 		api := &plugintest.API{}
-		api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 		defer api.AssertExpectations(t)
 		p := setupTestPlugin(t, api, &mockstore.Store{})
 		request := &model.SubmitDialogRequest{}
@@ -3139,7 +3353,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
@@ -3161,7 +3375,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID2",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
@@ -3183,7 +3397,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
@@ -3206,7 +3420,72 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Something went wrong. Please try again later.",
+		},
+		"Invalid request, user is neither creator nor System Admin": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "user2", Roles: model.SystemUserRoleId}, nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPoll(), nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: "postID1",
+				ChannelId:  "channelID1",
+				Submission: map[string]any{},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Only the creator of a poll and System Admins are allowed to delete it.",
+		},
+		"Valid request, user is System Admin": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(&model.User{Username: "user2", Roles: model.SystemAdminRoleId + " " + model.SystemUserRoleId}, nil)
+				api.On("DeletePost", "postID1").Return(nil)
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPoll(), nil)
+				store.PollStore.On("Delete", testutils.GetPoll()).Return(nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: "postID1",
+				ChannelId:  "channelID1",
+				Submission: map[string]any{},
+			},
+			ExpectedStatusCode: http.StatusOK,
+			ExpectedResponse:   nil,
+			ExpectedMsg:        "Successfully deleted the poll.",
+		},
+		"Invalid request, CanManagePoll fails": {
+			SetupAPI: func(api *plugintest.API) *plugintest.API {
+				api.On("GetPost", "postID1").Return(post, nil)
+				api.On("HasPermissionToChannel", "userID2", "channelID1", model.PermissionReadChannel).Return(true)
+				api.On("GetUser", "userID2").Return(nil, &model.AppError{})
+				return api
+			},
+			SetupStore: func(store *mockstore.Store) *mockstore.Store {
+				store.PollStore.On("Get", testutils.GetPollID()).Return(testutils.GetPoll(), nil)
+				return store
+			},
+			Request: &model.SubmitDialogRequest{
+				UserId:     "userID2",
+				CallbackId: "postID1",
+				ChannelId:  "channelID1",
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusOK,
 			ExpectedResponse:   nil,
@@ -3222,7 +3501,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusInternalServerError,
 		},
@@ -3239,7 +3518,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusInternalServerError,
 		},
@@ -3258,7 +3537,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusUnauthorized,
 		},
@@ -3276,7 +3555,7 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 				UserId:     "userID1",
 				CallbackId: "postID1",
 				ChannelId:  "channelID1",
-				Submission: map[string]interface{}{},
+				Submission: map[string]any{},
 			},
 			ExpectedStatusCode: http.StatusUnauthorized,
 		},
@@ -3293,7 +3572,6 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			if test.ExpectedMsg != "" {
 				ephemeralPost := &model.Post{
@@ -3334,7 +3612,8 @@ func TestHandleDeletePollConfirm(t *testing.T) {
 			assert.Equal(test.ExpectedResponse, response)
 			if test.ExpectedResponse != nil {
 				assert.Equal(http.Header{
-					"Content-Type": []string{"application/json"},
+					"Content-Type":           []string{"application/json"},
+					"X-Content-Type-Options": []string{"nosniff"},
 				}, result.Header)
 			}
 		})
@@ -3426,7 +3705,6 @@ func TestHandlePollMetadata(t *testing.T) {
 			assert := assert.New(t)
 
 			api := test.SetupAPI(&plugintest.API{})
-			api.On("LogDebug", testutils.GetMockArgumentsWithType("string", 7)...).Return()
 			api.On("LogWarn", testutils.GetMockArgumentsWithType("string", 3)...).Return().Maybe()
 			defer api.AssertExpectations(t)
 			store := test.SetupStore(&mockstore.Store{})
@@ -3448,7 +3726,7 @@ func TestHandlePollMetadata(t *testing.T) {
 			assert.Equal(test.ExpectedStatusCode, result.StatusCode)
 			if test.ShouldError {
 				assert.Equal([]byte{}, bodyBytes)
-				assert.Equal(http.Header{}, result.Header)
+				assert.Equal(http.Header{"X-Content-Type-Options": []string{"nosniff"}}, result.Header)
 			} else {
 				assert.Contains([]string{"application/json"}, result.Header.Get("Content-Type"))
 				b := new(bytes.Buffer)

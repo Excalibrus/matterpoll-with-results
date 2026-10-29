@@ -119,12 +119,12 @@ func safeConvert(convert IDToNameConverter, userID string) (name string, err *mo
 // ToPostActions returns the poll as a message. voterLists, if non-nil, must
 // have one entry per AnswerOption and provides the formatted voter names for
 // the result field of each option.
-func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, voterLists []string) []*model.SlackAttachment {
+func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, voterLists []string) []*model.MessageAttachment {
 	localizer := bundle.GetServerLocalizer()
 	numberOfVotes := 0
 	voters := make(map[string]struct{})
 	actions := []*model.PostAction{}
-	fields := []*model.SlackAttachmentField{}
+	fields := []*model.MessageAttachmentField{}
 
 	// First pass: total counts and max so we can scale progress bars.
 	maxOptionVotes := 0
@@ -151,7 +151,7 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 
 		heading := bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 			DefaultMessage: pollEndPostAnswerHeading,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"Answer": o.Answer,
 				"Count":  len(o.Voter),
 			},
@@ -161,7 +161,7 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 		if p.Settings.Bar {
 			title = fmt.Sprintf("%s\n`%s`", heading, progressBar(len(o.Voter), maxOptionVotes, 10))
 		}
-		field := &model.SlackAttachmentField{
+		field := &model.MessageAttachmentField{
 			Short: true,
 			Title: title,
 		}
@@ -241,7 +241,7 @@ func (p *Poll) ToPostActions(bundle *utils.Bundle, pluginID, authorName string, 
 		authorName = ""
 	}
 
-	return []*model.SlackAttachment{{
+	return []*model.MessageAttachment{{
 		Color:      "#1c58d9",
 		AuthorName: authorName,
 		Title:      "📊 " + p.Question,
@@ -274,14 +274,14 @@ func (p *Poll) makeAdditionalText(bundle *utils.Bundle, numberOfVotes, numberOfV
 	if len(settingsText) > 0 {
 		lines = append(lines, bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 			DefaultMessage: pollMessageSettings,
-			TemplateData:   map[string]interface{}{"Settings": settingsText},
+			TemplateData:   map[string]any{"Settings": settingsText},
 		}))
 	}
 
 	if p.IsMultiVote() {
 		lines = append(lines, bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 			DefaultMessage: pollMessageTotalVotesMultiSetting,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"TotalVotes":  numberOfVotes,
 				"TotalVoters": numberOfVoters,
 			},
@@ -290,7 +290,7 @@ func (p *Poll) makeAdditionalText(bundle *utils.Bundle, numberOfVotes, numberOfV
 	} else {
 		lines = append(lines, bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 			DefaultMessage: pollMessageTotalVotes,
-			TemplateData:   map[string]interface{}{"TotalVotes": numberOfVotes},
+			TemplateData:   map[string]any{"TotalVotes": numberOfVotes},
 		}))
 	}
 	return strings.Join(lines, "\n")
@@ -300,10 +300,10 @@ func (p *Poll) makeAdditionalText(bundle *utils.Bundle, numberOfVotes, numberOfV
 func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert IDToNameConverter) (*model.Post, *model.AppError) {
 	localizer := bundle.GetServerLocalizer()
 	post := &model.Post{}
-	fields := []*model.SlackAttachmentField{}
+	fields := []*model.MessageAttachmentField{}
 
 	for _, o := range p.AnswerOptions {
-		var voter string
+		var voter strings.Builder
 		if !p.Settings.Anonymous {
 			for i := 0; i < len(o.Voter); i++ {
 				displayName, err := convert(o.Voter[i])
@@ -311,25 +311,25 @@ func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert ID
 					return nil, err
 				}
 				if i+1 == len(o.Voter) && len(o.Voter) > 1 {
-					voter += " " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: pollEndPostSeparator}) + " "
+					voter.WriteString(" " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: pollEndPostSeparator}) + " ")
 				} else if i != 0 {
-					voter += ", "
+					voter.WriteString(", ")
 				}
-				voter += displayName
+				voter.WriteString(displayName)
 			}
 		}
 
-		fields = append(fields, &model.SlackAttachmentField{
+		fields = append(fields, &model.MessageAttachmentField{
 			Short: true,
 			Title: bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 				DefaultMessage: pollEndPostAnswerHeading,
-				TemplateData: map[string]interface{}{
+				TemplateData: map[string]any{
 					"Answer": o.Answer,
 					"Count":  len(o.Voter),
 				},
 				PluralCount: len(o.Voter),
 			}),
-			Value: voter,
+			Value: voter.String(),
 		})
 	}
 
@@ -337,7 +337,7 @@ func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert ID
 		authorName = ""
 	}
 
-	attachments := []*model.SlackAttachment{{
+	attachments := []*model.MessageAttachment{{
 		Color:      "#1c58d9",
 		AuthorName: authorName,
 		Title:      "📊 " + p.Question,
@@ -345,7 +345,7 @@ func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert ID
 		Fields:     fields,
 	}}
 
-	model.ParseSlackAttachment(post, attachments)
+	model.ParseMessageAttachment(post, attachments)
 
 	return post, nil
 }
@@ -353,16 +353,17 @@ func (p *Poll) ToEndPollPost(bundle *utils.Bundle, authorName string, convert ID
 // ToCard return the poll for rhs card
 func (p *Poll) ToCard(bundle *utils.Bundle, convert IDToNameConverter) string {
 	localizer := bundle.GetServerLocalizer()
-	s := fmt.Sprintf("# %s\n", p.Question)
+	var s strings.Builder
+	fmt.Fprintf(&s, "# %s\n", p.Question)
 
 	if !p.Settings.AnonymousCreator {
 		creatorName, _ := convert(p.Creator)
-		s += fmt.Sprintf(bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: rhsCardPollCreatedBy})+" %s\n", creatorName)
+		fmt.Fprintf(&s, bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: rhsCardPollCreatedBy})+" %s\n", creatorName)
 	}
 
 	const comma = ", "
 	for _, o := range p.AnswerOptions {
-		var voter string
+		var voter strings.Builder
 		if !p.Settings.Anonymous {
 			for i := 0; i < len(o.Voter); i++ {
 				displayName, err := convert(o.Voter[i])
@@ -370,22 +371,22 @@ func (p *Poll) ToCard(bundle *utils.Bundle, convert IDToNameConverter) string {
 					return ""
 				}
 				if i+1 == len(o.Voter) && len(o.Voter) > 1 {
-					voter += " " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: rhsCardPollVoterSeparator}) + " "
+					voter.WriteString(" " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{DefaultMessage: rhsCardPollVoterSeparator}) + " ")
 				} else if i != 0 {
-					voter += comma
+					voter.WriteString(comma)
 				}
-				voter += displayName
+				voter.WriteString(displayName)
 			}
 		}
 
-		s += "### " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
+		s.WriteString("### " + bundle.LocalizeWithConfig(localizer, &i18n.LocalizeConfig{
 			DefaultMessage: rhsCardPollAnswerHeading,
-			TemplateData: map[string]interface{}{
+			TemplateData: map[string]any{
 				"Answer": o.Answer,
 				"Count":  len(o.Voter),
 			},
 			PluralCount: len(o.Voter),
-		}) + "\n" + voter + "\n"
+		}) + "\n" + voter.String() + "\n")
 	}
-	return s
+	return s.String()
 }

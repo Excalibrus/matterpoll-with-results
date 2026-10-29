@@ -16,8 +16,8 @@ type Metadata struct {
 // ToMap returns a Metadata as a map. Used for the websocket "has_voted"
 // payload, which only carries user-personal data — option voter lists are
 // fetched separately via the GET metadata endpoint.
-func (m *Metadata) ToMap() map[string]interface{} {
-	return map[string]interface{}{
+func (m *Metadata) ToMap() map[string]any {
+	return map[string]any{
 		"voted_answers":             m.VotedAnswers,
 		"poll_id":                   m.PollID,
 		"user_id":                   m.UserID,

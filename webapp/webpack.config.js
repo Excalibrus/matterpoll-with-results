@@ -1,13 +1,18 @@
 const exec = require('child_process').exec;
-
 const path = require('path');
+
+const webpack = require('webpack');
 
 const PLUGIN_ID = require('../plugin.json').id;
 
 const NPM_TARGET = process.env.npm_lifecycle_event; //eslint-disable-line no-process-env
 const isDev = NPM_TARGET === 'debug' || NPM_TARGET === 'debug:watch';
 
-const plugins = [];
+const plugins = [
+    new webpack.ProvidePlugin({
+        process: 'process/browser',
+    }),
+];
 if (NPM_TARGET === 'build:watch' || NPM_TARGET === 'debug:watch') {
     plugins.push({
         apply: (compiler) => {
@@ -36,9 +41,6 @@ const config = {
     resolve: {
         alias: {
             '@': path.resolve(__dirname, 'src'),
-            '@mattermost/types': path.resolve(__dirname, 'node_modules/@mattermost/types/lib'),
-            'mattermost-redux': path.resolve(__dirname, 'node_modules/mattermost-webapp/packages/mattermost-redux/src'),
-            reselect: path.resolve(__dirname, 'node_modules/mattermost-webapp/packages/reselect/src'),
         },
         modules: [
             'src',
@@ -51,7 +53,7 @@ const config = {
         rules: [
             {
                 test: /\.(js|jsx|ts|tsx)$/,
-                exclude: /node_modules\/(?!(mattermost-webapp)\/).*/,
+                exclude: /node_modules/,
                 use: {
                     loader: 'babel-loader',
                     options: {
@@ -83,9 +85,11 @@ const config = {
     externals: {
         react: 'React',
         'react-dom': 'ReactDOM',
+        'react-dom/client': 'ReactDOM',
+        'react/jsx-runtime': 'ReactJSXRuntime',
+        'react/jsx-dev-runtime': 'ReactJSXDevRuntime',
         redux: 'Redux',
         'react-redux': 'ReactRedux',
-        'prop-types': 'PropTypes',
         'react-bootstrap': 'ReactBootstrap',
         'react-router-dom': 'ReactRouterDom',
     },
@@ -95,7 +99,7 @@ const config = {
         publicPath: '/',
         filename: 'main.js',
     },
-    mode: (isDev) ? 'eval-source-map' : 'production',
+    mode: (isDev) ? 'development' : 'production',
     plugins,
 };
 

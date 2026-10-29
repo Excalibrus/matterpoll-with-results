@@ -31,16 +31,16 @@ func TestPollToEndPollPost(t *testing.T) {
 
 	for name, test := range map[string]struct {
 		Poll                *poll.Poll
-		ExpectedAttachments []*model.SlackAttachment
+		ExpectedAttachments []*model.MessageAttachment
 	}{
 		"Normal poll": {
 			Poll: testutils.GetPollWithVotes(),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
-				Fields: []*model.SlackAttachmentField{{
+				Fields: []*model.MessageAttachmentField{{
 					Title: "Answer 1 (3 votes)",
 					Value: "@user1, @user2 and @user3",
 					Short: true,
@@ -57,12 +57,12 @@ func TestPollToEndPollPost(t *testing.T) {
 		},
 		"Anonymous poll": {
 			Poll: testutils.GetPollWithVotesAndSettings(poll.Settings{Anonymous: true}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
-				Fields: []*model.SlackAttachmentField{{
+				Fields: []*model.MessageAttachmentField{{
 					Title: "Answer 1 (3 votes)",
 					Value: "",
 					Short: true,
@@ -79,12 +79,12 @@ func TestPollToEndPollPost(t *testing.T) {
 		},
 		"Anonymous creator poll": {
 			Poll: testutils.GetPollWithVotesAndSettings(poll.Settings{AnonymousCreator: true}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "",
 				Title:      "📊 Question",
 				Text:       "This poll has ended. The results are:",
-				Fields: []*model.SlackAttachmentField{{
+				Fields: []*model.MessageAttachmentField{{
 					Title: "Answer 1 (3 votes)",
 					Value: "@user1, @user2 and @user3",
 					Short: true,
@@ -102,7 +102,7 @@ func TestPollToEndPollPost(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			expectedPost := &model.Post{}
-			model.ParseSlackAttachment(expectedPost, test.ExpectedAttachments)
+			model.ParseMessageAttachment(expectedPost, test.ExpectedAttachments)
 
 			post, err := test.Poll.ToEndPollPost(testutils.GetBundle(), "John Doe", converter)
 
@@ -146,500 +146,507 @@ func TestPollToPostActions(t *testing.T) {
 
 	for name, test := range map[string]struct {
 		Poll                *poll.Poll
-		ExpectedAttachments []*model.SlackAttachment
+		ExpectedAttachments []*model.MessageAttachment
 	}{
 		"Two options": {
 			Poll: testutils.GetPollTwoOptions(),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Yes (0 votes)"},
 					{Short: true, Title: "No (0 votes)"},
 				},
 				Text:       "---\n**Total votes**: 0",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Yes",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Yes",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "No",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Vote",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "No",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Vote",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multiple questions, settings: progress": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Progress: true, MaxVotes: 1}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
 					{Short: true, Title: "Answer 3 (0 votes)"},
 				},
 				Text:       "---\n**Poll Settings**: progress\n**Total votes**: 0",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1 (0)",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1 (0)",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2 (0)",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3 (0)",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Vote",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2 (0)",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3 (0)",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Vote",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multiple questions, settings: anonymous, public-add-option": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Anonymous: true, PublicAddOption: true, MaxVotes: 1}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
 					{Short: true, Title: "Answer 3 (0 votes)"},
 				},
 				Text:       "---\n**Poll Settings**: anonymous, public-add-option\n**Total votes**: 0",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Vote",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Vote",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multipile questions, settings: anonymous, anonymous-creator": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{Anonymous: true, AnonymousCreator: true, MaxVotes: 1}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
 					{Short: true, Title: "Answer 3 (0 votes)"},
 				},
 				Text:       "---\n**Poll Settings**: anonymous, anonymous-creator\n**Total votes**: 0",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Vote",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Vote",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multipile questions, settings: votes=3": {
 			Poll: pollWithMulti,
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (1 vote)"},
 					{Short: true, Title: "Answer 2 (1 vote)"},
 					{Short: true, Title: "Answer 3 (1 vote)"},
 				},
 				Text:       "---\n**Poll Settings**: votes=3\n**Total votes**: 3 (1 voter)",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Votes",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Votes",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multiple questions, settings: votes=3, multiple voters": {
 			Poll: pollWithMulti2,
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (3 votes)"},
 					{Short: true, Title: "Answer 2 (2 votes)"},
 					{Short: true, Title: "Answer 3 (1 vote)"},
 				},
 				Text:       "---\n**Poll Settings**: votes=3\n**Total votes**: 6 (3 voters)",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Votes",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Votes",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},
 		"Multiple questions, settings: votes=0": {
 			Poll: testutils.GetPollWithSettings(poll.Settings{MaxVotes: 0}),
-			ExpectedAttachments: []*model.SlackAttachment{{
+			ExpectedAttachments: []*model.MessageAttachment{{
 				Color:      "#1c58d9",
 				AuthorName: "John Doe",
 				Title:      "📊 Question",
-				Fields: []*model.SlackAttachmentField{
+				Fields: []*model.MessageAttachmentField{
 					{Short: true, Title: "Answer 1 (0 votes)"},
 					{Short: true, Title: "Answer 2 (0 votes)"},
 					{Short: true, Title: "Answer 3 (0 votes)"},
 				},
 				Text:       "---\n**Poll Settings**: votes=unlimited\n**Total votes**: 0 (0 voters)",
-				Actions: []*model.PostAction{{
-					Id:    "vote0",
-					Name:  "Answer 1",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+				Actions: []*model.PostAction{
+					{
+						Id:    "vote0",
+						Name:  "Answer 1",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/0", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote1",
+						Name:  "Answer 2",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "vote2",
+						Name:  "Answer 3",
+						Type:  model.PostActionTypeButton,
+						Style: "default",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "resetVote",
+						Name:  "Reset Your Votes",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "addOption",
+						Name:  "Add Option",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "endPoll",
+						Name:  "End Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "primary",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
+					}, {
+						Id:    "deletePoll",
+						Name:  "Delete Poll",
+						Type:  model.PostActionTypeButton,
+						Style: "danger",
+						Integration: &model.PostActionIntegration{
+							URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
+						},
 					},
-				}, {
-					Id:    "vote1",
-					Name:  "Answer 2",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/1", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "vote2",
-					Name:  "Answer 3",
-					Type:  model.PostActionTypeButton,
-					Style: "default",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/vote/2", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "resetVote",
-					Name:  "Reset Your Votes",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/votes/reset", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "addOption",
-					Name:  "Add Option",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/option/add/request", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "endPoll",
-					Name:  "End Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "primary",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/end", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				}, {
-					Id:    "deletePoll",
-					Name:  "Delete Poll",
-					Type:  model.PostActionTypeButton,
-					Style: "danger",
-					Integration: &model.PostActionIntegration{
-						URL: fmt.Sprintf("/plugins/%s/api/%s/polls/%s/delete", PluginID, currentAPIVersion, testutils.GetPollID()),
-					},
-				},
 				},
 			}},
 		},

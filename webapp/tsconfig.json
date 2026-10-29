@@ -3,17 +3,13 @@
     "target": "esnext",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@mattermost/types/*": ["node_modules/@mattermost/types/lib/*"],
-      "mattermost-redux/*": ["node_modules/mattermost-webapp/packages/mattermost-redux/src/*"],
-      "reselect": ["node_modules/mattermost-webapp/packages/reselect/src"],
+      "@/*": ["src/*"]
     },
     "lib": [
       "dom",
       "dom.iterable",
       "esnext"
     ],
-    "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
